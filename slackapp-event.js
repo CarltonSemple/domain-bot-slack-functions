@@ -4,11 +4,6 @@ const request = require('request');
 const watson = require('watson-developer-cloud');
 var log = console.log;
 
-// connect to the Cloudant database
-var Cloudant = require('cloudant');
-var cloudant;
-var cloudantDbName = '';
-
 var discoveryEnvironmentId = '';
 var discoveryCollectionId = '';
 var discoveryUsername = '';
@@ -35,8 +30,6 @@ var setupGlobalVariables = (args) => {
         version_date: watson.ConversationV1.VERSION_DATE_2016_09_20
     });
     conversationWorkspaceId = args.conversationWorkspaceId;
-    cloudant = Cloudant({url: args.cloudantUrl});
-    cloudantDbName = args.cloudantDb;
 };
 
 var main = (args) => {
@@ -108,7 +101,6 @@ var main = (args) => {
         body.event.text = body.event.text.replace('<@'+ bot_mention_id + '>', '');
     }
 
-    //log(JSON.stringify(body));
     if (!body.event.text) {
         return  {
             statusCode: 200,
@@ -163,7 +155,6 @@ var interactWithConversationAndDiscovery = (slackRequestBody) => {
                 body.event.channel, 
                 'Uh oh! My smarter side didn\'t catch that. Let\'s see what we can find...'
             );
-            //resolve({body:'conversation error'});
         }).then(conversationResponse => {
             // default to search unless conversationResponse exists and says otherwise
             if (conversationResponse) {
@@ -297,7 +288,6 @@ function postMessageAdvanced(originalEventObject, accessToken, user_channel_id, 
             thread_ts: thread_ts
         }
     }, function(error, response, body) {
-        console.log('postMessageAdvanced results:');
         callback(error, response, body);
     });
 }
@@ -307,7 +297,6 @@ var handleDiscoveryResponse = (originalEventObject, replyMessage, body, command,
     var positiveActions = [];
     var documentIdsAndUrls = {};
     var allNegativeAction = [];
-    var moreActions = [];
 
     log('inquiry: ' + command.text);
 
@@ -317,8 +306,6 @@ var handleDiscoveryResponse = (originalEventObject, replyMessage, body, command,
         documentIdsAndUrls[body.results[i].id] = body.results[i].metadata.srcUrl;
     }
 
-    let moreAnswersMessage = '';
-
     for(let i = 0; i < body.passages.length && i <= 4; i++) {
         let item = body.passages[i];
         let index = i;
@@ -326,23 +313,15 @@ var handleDiscoveryResponse = (originalEventObject, replyMessage, body, command,
         if(item.document_id in documentIdsAndUrls) {
             docURL = documentIdsAndUrls[item.document_id];
         }
-        //docURL = transformToURL(docURL);
 
         console.log(item);
 
-        if (i < 2) {
-            replyMessage += '\n\n\n' 
-            + (index+1) + ' '
-            + `\`\`\`${item.passage_text}\`\`\``
-            + '\n' + docURL
-            + ' | ' + item.passage_score.toFixed(3);
-        } else {
-            moreAnswersMessage += '\n\n\n' 
-            + (index+1) + ' '
-            + `\`\`\`${item.passage_text}\`\`\``
-            + '\n' + docURL
-            + ' | ' + item.passage_score.toFixed(3);
-        }
+        replyMessage += '\n\n\n' 
+        + (index+1) + ' '
+        + `\`\`\`${item.passage_text}\`\`\``
+        + '\n' + docURL
+        + ' | ' + item.passage_score.toFixed(3);
+        
 
         let numText = index + 1;
 
@@ -398,67 +377,7 @@ var handleDiscoveryResponse = (originalEventObject, replyMessage, body, command,
         }
     ];
 
-    // save query response to cloudant
-    var queryDatabase = cloudant.use(cloudantDbName);
-    let date = new Date();
-    let messageData = {
-        upload_time: date.getTime(),
-        originalEventObject: originalEventObject,
-        user_channel_id: command.user_channel_id,
-        text: moreAnswersMessage,
-        attachments: attachments
-    };
-
-    let cloudant_id = command.text;
-    cloudant_id = cloudant_id.toLowerCase().replace(/[^a-zA-Z0-9]+/g, '-');
-
-    queryDatabase.get(cloudant_id, function(err, body) {
-        if (!err) {
-            var latestRev = body._rev;
-            queryDatabase.destroy(cloudant_id, latestRev, function(err, body, header) {
-                if (!err) {
-                    console.log('Successfully deleted doc', cloudant_id);
-                    queryDatabase.insert(messageData, cloudant_id, function(err, body, header) {
-                        if (err) {
-                            log('insert error');
-                        } else {
-                            log('message data inserted');
-                        }
-                    });
-                }
-            });
-        }
-    });
-    queryDatabase.insert(messageData, cloudant_id, function(err, body, header) {
-        if (err) {
-            log('insert error');
-        } else {
-            log('message data inserted');
-        }
-    });
-
-    let thisAttachmentSet = [
-        {
-            'text': ' ',
-            'fallback': 'You are unable to pick',
-            'callback_id': 'wopr_game',
-            'color': '#3AA3E3',
-            'attachment_type': 'default',
-            'actions': [{
-                value: JSON.stringify({
-                    type: 'echo',
-                    query: command.text,
-                    cloudant_id: cloudant_id,
-                    ts: originalEventObject.ts
-                }),
-                name: command.text,
-                type: 'button',
-                text: 'More answers'
-            }]
-        }
-    ];
-
-    postMessageAdvanced(originalEventObject, slackbotAccessToken, command.user_channel_id, replyMessage, thisAttachmentSet, callback);
+    postMessageAdvanced(originalEventObject, slackbotAccessToken, command.user_channel_id, replyMessage, attachments, callback);
 };
 
 var callDiscovery = (command) => {
